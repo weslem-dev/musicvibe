@@ -1,0 +1,32 @@
+/* ADICIONADO NA AULA 06.
+   --brand-color é A cor de marca do MusicVibe: definida uma única vez aqui,
+   e todos os componentes-base (BaseButton, FormCard) leem dela via
+   var(--brand-color). Trocar a identidade visual do projeto no futuro
+   significa mudar esta linha, e não caçar cor por cor em cada componente. */
+:root {
+  --brand-color: #7c3aed;
+  --brand-color-dark: #5b21b6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: #1a1a1a;
+  background: #f7f6fb;
+}
+
+a {
+  color: var(--brand-color);
+}
+
+/* Aula 12: a grade de cards de faixa era copiada (idêntica) em 5 telas -- Feed,
+   Feed de quem eu sigo, Curtidas, Meus Itens e Perfil Público. Agora é UMA classe. */
+.track-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 1.25rem;
+}
