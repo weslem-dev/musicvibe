@@ -2,6 +2,8 @@ const sequelize = require('../../config/database');
 const Track = require('../track/trackModel');
 const User = require('../user/userModel');
 const Comment = require('./commentModel');
+const { createNotification } = require('../notification/notificationService'); // AULA 14
+const { NOTIFICATION } = require('../../config/constants'); // AULA 14
 
 const AUTHOR_ATTRIBUTES = ['id', 'username', 'fullName', 'profilePicture'];
 
@@ -16,8 +18,9 @@ function httpError(status, message) {
 // controller. userId e trackId são números: trocá-los não dá erro, só grava
 // o comentário na faixa errada.
 async function createComment(userId, trackId, content) {
-    // A linha em `comments` + o contador commentsCount em `tracks` são UMA
-    // escrita dupla: transação. Todo comando leva { transaction: t }.
+    // A linha em `comments` + o contador commentsCount em `tracks` + o aviso
+    // ao dono da faixa (Aula 14) são TRÊS escritas: transação. Todo comando
+    // leva { transaction: t }.
     const created = await sequelize.transaction(async (t) => {
         // TRAVA a linha da faixa antes de qualquer escrita. Sem a trava, cada
         // transação segura uma trava compartilhada na linha da faixa (por causa
@@ -26,7 +29,7 @@ async function createComment(userId, trackId, content) {
         // esperando uma pela outra (deadlock) e o banco derruba uma delas.
         // Pedindo a exclusiva primeiro, elas entram em fila.
         const track = await Track.findByPk(trackId, {
-            attributes: ['id'],
+            attributes: ['id', 'userId'],
             transaction: t,
             lock: t.LOCK.UPDATE
         });
@@ -37,6 +40,10 @@ async function createComment(userId, trackId, content) {
 
         const comment = await Comment.create({ content, userId, trackId }, { transaction: t });
         await Track.increment('commentsCount', { where: { id: trackId }, transaction: t });
+
+        // AULA 14: só CRIAR. A API não exclui comentários, então não há
+        // "desfazer" (e o aviso não é criado se o dono comentar na própria faixa).
+        await createNotification({ userId: track.userId, actorId: userId, type: NOTIFICATION.TYPES.COMMENT, trackId }, t);
 
         return comment;
     });

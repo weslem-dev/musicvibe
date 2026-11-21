@@ -92,6 +92,11 @@ async function handleLogout() {
           <i class="bi bi-music-note-list"></i> Minhas Faixas
         </router-link>
       </li>
+      <li role="none">
+        <router-link :to="{ name: 'my-playlists' }" role="menuitem" @click="close">
+          <i class="bi bi-collection"></i> Minhas Playlists
+        </router-link>
+      </li>
       <li role="none" class="user-menu__divider">
         <button type="button" role="menuitem" @click="handleLogout">
           <i class="bi bi-box-arrow-right"></i> Sair

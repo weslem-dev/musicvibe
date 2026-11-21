@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import { useAuthenticatedAction } from '../composables/useAuthenticatedAction'
 import { toggleLike } from '../services/likeService'
+import { runOptimistic } from '../utils/optimistic'
 import { formatCount } from '../utils/format'
 
 // ADICIONADO NA AULA 10. Botão de curtir com ATUALIZAÇÃO OTIMISTA.
@@ -18,14 +19,12 @@ import { formatCount } from '../utils/format'
 //
 // AULA 12: a "cerca" (visitante vai ao login; ignora clique enquanto ocupado) saiu
 // daqui e foi para useAuthenticatedAction, e o aviso de erro virou toast (vem do
-// interceptor do Axios): o `catch` agora SÓ desfaz a mudança visual.
+// interceptor do Axios).
 //
-// Por que o miolo da atualização otimista (os 3 passos) NÃO foi extraído num
-// composable: existem só DOIS botões com ele (curtir e seguir), e eles diferem
-// no que importa (um estado e um contador num componente, dois v-model no outro).
-// Pela "regra dos três" (só se extrai com a terceira repetição, quando já dá para
-// ver o que é igual de verdade), copiar duas vezes é mais barato e mais claro do
-// que inventar agora uma abstração que talvez nasça com o formato errado.
+// AULA 13: os três passos agora usam runOptimistic (utils/optimistic.js). Na Aula
+// 12 o miolo ficou copiado aqui e no FollowButton de propósito (só havia duas
+// cópias); o modal "Salvar" das playlists foi o TERCEIRO caso, e pela regra dos
+// três chegou a hora de extrair. O comportamento não muda.
 const props = defineProps({
   trackId: { type: [Number, String], required: true },
   initialLiked: { type: Boolean, default: false },
@@ -48,28 +47,31 @@ watch(
   }
 )
 
-const { run: toggle, isBusy } = useAuthenticatedAction(async () => {
-  // PASSO 1: guarda o estado anterior, pra poder voltar atrás.
-  const previous = { liked: liked.value, count: count.value }
+const { run: toggle, isBusy } = useAuthenticatedAction(() =>
+  runOptimistic({
+    // PASSOS 1 e 2: guarda o estado anterior e muda a tela NA HORA. Devolve a
+    // função que desfaz (rollback), usada só se a API falhar.
+    apply: () => {
+      const previous = { liked: liked.value, count: count.value }
 
-  // PASSO 2: muda a tela NA HORA, sem esperar a rede.
-  liked.value = !previous.liked
-  count.value = Math.max(0, previous.count + (liked.value ? 1 : -1))
+      liked.value = !previous.liked
+      count.value = Math.max(0, previous.count + (liked.value ? 1 : -1))
 
-  try {
-    // PASSO 3a: o servidor confirma e diz o estado FINAL; adotamos o dele
-    // (ele é a fonte da verdade -- o contador pode ter mudado por causa de
-    // outras pessoas curtindo ao mesmo tempo).
-    const response = await toggleLike(props.trackId)
-    liked.value = response.data.liked
-    count.value = response.data.likesCount
-    emit('change', { liked: liked.value, count: count.value })
-  } catch {
-    // PASSO 3b: ROLLBACK -- só desfaz a mudança visual. Quem avisa do erro é o toast.
-    liked.value = previous.liked
-    count.value = previous.count
-  }
-})
+      return () => {
+        liked.value = previous.liked
+        count.value = previous.count
+      }
+    },
+    request: () => toggleLike(props.trackId),
+    // PASSO 3: o servidor confirma e diz o estado FINAL; adotamos o dele (o
+    // contador pode ter mudado por causa de outras pessoas curtindo ao mesmo tempo).
+    confirm: (data) => {
+      liked.value = data.liked
+      count.value = data.likesCount
+      emit('change', { liked: liked.value, count: count.value })
+    },
+  })
+)
 </script>
 
 <template>

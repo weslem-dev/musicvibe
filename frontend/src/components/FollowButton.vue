@@ -1,6 +1,7 @@
 <script setup>
 import { useAuthenticatedAction } from '../composables/useAuthenticatedAction'
 import { toggleFollow } from '../services/followService'
+import { runOptimistic } from '../utils/optimistic'
 
 // ADICIONADO NA AULA 11. Botão Seguir/Seguindo com atualização otimista.
 //
@@ -18,10 +19,9 @@ import { toggleFollow } from '../services/followService'
 //   />
 //
 // AULA 12: a "cerca" (visitante -> login; ignora clique enquanto ocupado) vem de
-// useAuthenticatedAction, e o aviso de erro é o toast do interceptor: o `catch`
-// SÓ desfaz a mudança visual. O miolo otimista continua escrito aqui (e no
-// LikeButton) de propósito: só há duas cópias, e a "regra dos três" manda esperar
-// a terceira para extrair.
+// useAuthenticatedAction, e o aviso de erro é o toast do interceptor.
+// AULA 13: os três passos usam runOptimistic (utils/optimistic.js), extraído no
+// terceiro caso (o modal "Salvar"). O comportamento não muda.
 const props = defineProps({
   userId: { type: [Number, String], required: true },
 })
@@ -30,33 +30,37 @@ const props = defineProps({
 const following = defineModel('following', { type: Boolean, default: false })
 const followersCount = defineModel('followersCount', { type: Number, default: 0 })
 
-const { run: toggle, isBusy } = useAuthenticatedAction(async () => {
-  // PASSO 1: guarda o estado anterior, pra poder voltar atrás (rollback).
-  const previous = { following: following.value, followersCount: followersCount.value }
+const { run: toggle, isBusy } = useAuthenticatedAction(() =>
+  runOptimistic({
+    apply: () => {
+      // PASSO 1: guarda o estado anterior, pra poder voltar atrás (rollback).
+      const previous = { following: following.value, followersCount: followersCount.value }
 
-  // O NOVO estado fica numa variável LOCAL. Com defineModel, depois de
-  // `following.value = x` o valor lido de `following.value` AINDA é o antigo
-  // até o pai re-renderizar e devolver a prop atualizada (o defineModel só
-  // emite o evento "update"; quem de fato troca o valor é o pai). Por isso o
-  // código NUNCA lê following.value logo depois de atribuí-lo: usa nowFollowing.
-  const nowFollowing = !previous.following
+      // O NOVO estado fica numa variável LOCAL. Com defineModel, depois de
+      // `following.value = x` o valor lido de `following.value` AINDA é o antigo
+      // até o pai re-renderizar e devolver a prop atualizada (o defineModel só
+      // emite o evento "update"; quem de fato troca o valor é o pai). Por isso o
+      // código NUNCA lê following.value logo depois de atribuí-lo: usa nowFollowing.
+      const nowFollowing = !previous.following
 
-  // PASSO 2: muda a tela NA HORA (botão e contador do cartão do perfil).
-  // Math.max(0, ...) impede o contador de ir para -1.
-  following.value = nowFollowing
-  followersCount.value = Math.max(0, previous.followersCount + (nowFollowing ? 1 : -1))
+      // PASSO 2: muda a tela NA HORA (botão e contador do cartão do perfil).
+      // Math.max(0, ...) impede o contador de ir para -1.
+      following.value = nowFollowing
+      followersCount.value = Math.max(0, previous.followersCount + (nowFollowing ? 1 : -1))
 
-  try {
-    // PASSO 3a: o servidor confirma e diz o estado FINAL; adotamos o dele.
-    const response = await toggleFollow(props.userId)
-    following.value = response.data.isFollowing
-    followersCount.value = response.data.followersCount
-  } catch {
-    // PASSO 3b: ROLLBACK -- só desfaz a mudança visual. Quem avisa do erro é o toast.
-    following.value = previous.following
-    followersCount.value = previous.followersCount
-  }
-})
+      return () => {
+        following.value = previous.following
+        followersCount.value = previous.followersCount
+      }
+    },
+    request: () => toggleFollow(props.userId),
+    // PASSO 3: o servidor confirma e diz o estado FINAL; adotamos o dele.
+    confirm: (data) => {
+      following.value = data.isFollowing
+      followersCount.value = data.followersCount
+    },
+  })
+)
 </script>
 
 <template>
