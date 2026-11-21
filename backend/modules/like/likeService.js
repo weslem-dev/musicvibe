@@ -2,6 +2,8 @@ const sequelize = require('../../config/database');
 const Track = require('../track/trackModel');
 const User = require('../user/userModel');
 const Like = require('./likeModel');
+const { createNotification, removeNotification } = require('../notification/notificationService'); // AULA 14
+const { NOTIFICATION } = require('../../config/constants'); // AULA 14
 
 const AUTHOR_ATTRIBUTES = ['id', 'username', 'fullName', 'profilePicture'];
 
@@ -17,8 +19,9 @@ function httpError(status, message) {
 // não dá erro nenhum -- só curte a faixa errada, em nome da pessoa errada.
 async function toggleLike(userId, trackId) {
     try {
-        // Cada escrita DUPLA (a linha em `likes` + o contador em `tracks`)
-        // acontece dentro de uma transação: ou as duas valem, ou nenhuma.
+        // TRÊS escritas (a linha em `likes` + o contador em `tracks` + o aviso
+        // em `notifications`, desde a Aula 14) dentro de uma transação: ou
+        // valem as três, ou nenhuma.
         // ATENÇÃO: todo comando aqui dentro leva { transaction: t }. Um que
         // esqueça rodaria FORA da transação (outra conexão, já confirmado), e
         // não seria desfeito se o resto falhasse.
@@ -30,8 +33,9 @@ async function toggleLike(userId, trackId) {
             // removida. Com a trava, quem chega depois ESPERA a transação
             // anterior terminar e então enxerga o resultado dela. Os próximos
             // comandos só rodam depois de a trava ser obtida.
+            // userId (o DONO) também: é ele quem recebe o aviso (Aula 14).
             const track = await Track.findByPk(trackId, {
-                attributes: ['id'],
+                attributes: ['id', 'userId'],
                 transaction: t,
                 lock: t.LOCK.UPDATE
             });
@@ -44,13 +48,20 @@ async function toggleLike(userId, trackId) {
 
             let liked;
 
+            // AULA 14: o aviso vai para o DONO da faixa; quem agiu é quem curtiu.
+            // Os mesmos quatro dados criam (ao curtir) e apagam (ao descurtir).
+            // O `t` no segundo argumento é obrigatório (ver notificationService).
+            const notice = { userId: track.userId, actorId: userId, type: NOTIFICATION.TYPES.LIKE, trackId };
+
             if (existing) {
                 await existing.destroy({ transaction: t });
                 await Track.decrement('likesCount', { where: { id: trackId }, transaction: t });
+                await removeNotification(notice, t);
                 liked = false;
             } else {
                 await Like.create({ userId, trackId }, { transaction: t });
                 await Track.increment('likesCount', { where: { id: trackId }, transaction: t });
+                await createNotification(notice, t);
                 liked = true;
             }
 

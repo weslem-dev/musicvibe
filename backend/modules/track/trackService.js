@@ -7,6 +7,10 @@ const User = require('../user/userModel');
 const Like = require('../like/likeModel');
 const Comment = require('../comment/commentModel');
 const Follow = require('../follow/followModel');
+const Playlist = require('../playlist/playlistModel');
+const PlaylistTrack = require('../playlist/playlistTrackModel');
+const Report = require('../report/reportModel'); // AULA 14
+const Notification = require('../notification/notificationModel'); // AULA 14
 const { PAGINATION } = require('../../config/constants');
 const { removeFile } = require('../../utils/fileCleanup');
 
@@ -191,14 +195,17 @@ async function getTrackAudioFile(trackId) {
 //      que existe.
 // (401, por sua vez, é "não sei quem é você" e já foi resolvido antes, pelo
 // isAuthenticated: nem chega aqui.)
-async function findOwnedTrack(trackId, userId) {
+// AULA 15: isAdmin (padrão false) libera a checagem de dono -- só o painel de
+// administração passa true. A rota comum de excluir não passa nada, então nela
+// até o administrador recebe 403 numa faixa de outra pessoa.
+async function findOwnedTrack(trackId, userId, isAdmin = false) {
     const track = await Track.findByPk(trackId);
 
     if (!track) {
         throw httpError(404, 'Faixa não encontrada.');
     }
 
-    if (track.userId !== userId) {
+    if (!isAdmin && track.userId !== userId) {
         throw httpError(403, 'Você não tem permissão para modificar esta faixa.');
     }
 
@@ -260,8 +267,10 @@ async function updateTrack(trackId, userId, fields, file) {
 }
 
 // ADICIONADO NA AULA 09.
-async function deleteTrack(trackId, userId) {
-    const track = await findOwnedTrack(trackId, userId);
+// AULA 15: + isAdmin (padrão false). O painel de administração exclui pela MESMA
+// função (com true), sem repetir a limpeza das tabelas.
+async function deleteTrack(trackId, userId, isAdmin = false) {
+    const track = await findOwnedTrack(trackId, userId, isAdmin);
 
     const { audioFile, cover } = track;
 
@@ -282,10 +291,65 @@ async function deleteTrack(trackId, userId) {
             throw httpError(404, 'Faixa não encontrada.');
         }
 
+        // --- AULA 13: a faixa sai de todas as playlists em que estava ---
+        // O banco tem ON DELETE CASCADE em playlist_tracks, então as linhas da
+        // junção sumiriam sozinhas junto com a faixa. Mas o CASCADE só apaga
+        // LINHAS: ele não sabe que playlists.tracks_count é um contador guardado,
+        // derivado dessas linhas. Sem este bloco, cada playlist afetada ficaria
+        // contando uma faixa que não existe mais.
+        //
+        // A faixa já está travada acima; nenhuma adição nova pode entrar até o
+        // fim desta transação (a adição trava a faixa primeiro). Para manter a
+        // mesma ordem de travas do módulo de playlists (faixa -> playlist ->
+        // junção) e não cair em deadlock com uma remoção simultânea:
+        //  1) descobre as playlists candidatas;
+        //  2) trava essas playlists (em ordem de id);
+        //  3) relê a junção JÁ COM a trava (pode ter havido uma remoção nesse meio
+        //     tempo) e só desconta das playlists que de fato tinham a faixa.
+        const candidates = await PlaylistTrack.findAll({ where: { trackId }, attributes: ['playlistId'], transaction });
+
+        if (candidates.length) {
+            await Playlist.findAll({
+                where: { id: candidates.map((entry) => entry.playlistId) },
+                attributes: ['id'],
+                order: [['id', 'ASC']],
+                transaction,
+                lock: transaction.LOCK.UPDATE
+            });
+
+            const entries = await PlaylistTrack.findAll({
+                where: { trackId },
+                attributes: ['playlistId'],
+                transaction,
+                lock: transaction.LOCK.UPDATE
+            });
+            const affectedIds = entries.map((entry) => entry.playlistId);
+
+            // Cada playlist tem a faixa no máximo UMA vez (índice único), então
+            // descontar 1 de cada playlist afetada é exato.
+            if (affectedIds.length) {
+                await Playlist.decrement('tracksCount', { where: { id: affectedIds }, transaction });
+            }
+
+            await PlaylistTrack.destroy({ where: { trackId }, transaction });
+        }
+
+        // --- AULA 14: denúncias e notificações da faixa saem antes dela ---
+        // reports.track_id é NOT NULL e a chave estrangeira é NO ACTION: sem esta
+        // linha, o banco RECUSA apagar a faixa (500 citando a FK de reports).
+        await Report.destroy({ where: { trackId }, transaction });
+        // notifications.track_id aceita null e a chave é SET NULL: sem esta
+        // linha, a faixa sairia, mas os avisos ficariam ÓRFÃOS (track_id NULL),
+        // "curtiu a sua faixa" de uma faixa que não existe mais.
+        await Notification.destroy({ where: { trackId }, transaction });
+
         await Like.destroy({ where: { trackId }, transaction });
         await Comment.destroy({ where: { trackId }, transaction });
         await track.destroy({ transaction });
-        await User.decrement('tracksCount', { where: { id: userId }, transaction });
+        // AULA 15: desconta do DONO da faixa (track.userId). Antes era o userId de
+        // quem pediu, que só era o dono porque só o dono podia excluir; pelo
+        // painel, quem pede é o administrador.
+        await User.decrement('tracksCount', { where: { id: track.userId }, transaction });
     });
 
     // Banco primeiro (já confirmado acima), disco depois: mesma regra do

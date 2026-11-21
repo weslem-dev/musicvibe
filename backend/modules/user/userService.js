@@ -77,14 +77,30 @@ async function getPublicProfile(username, viewerId) {
 }
 
 async function loginUser(email, password) {
+    // AULA 15: a mensagem genérica passou a ter status 401 (antes saía como 500,
+    // o padrão do errorHandler para um erro sem status).
     const user = await User.findOne({ where: { email } });
     if (!user) {
-        throw new Error('E-mail ou senha inválidos.');
+        const error = new Error('E-mail ou senha inválidos.');
+        error.status = 401;
+        throw error;
     }
 
     const passwordMatches = await bcrypt.compare(password, user.password);
     if (!passwordMatches) {
-        throw new Error('E-mail ou senha inválidos.');
+        const error = new Error('E-mail ou senha inválidos.');
+        error.status = 401;
+        throw error;
+    }
+
+    // AULA 15: conta bloqueada não entra (403: a pessoa É quem diz ser, mas não
+    // tem permissão de usar a conta). A checagem vem DEPOIS da senha: antes dela,
+    // qualquer um descobriria, só pelo e-mail, quais contas existem e estão
+    // bloqueadas. Com a senha errada, o bloqueado recebe a mesma mensagem genérica.
+    if (user.isBlocked) {
+        const error = new Error('Sua conta foi bloqueada. Entre em contato com a administração.');
+        error.status = 403;
+        throw error;
     }
 
     return {

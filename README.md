@@ -2,7 +2,7 @@
 
 Plataforma web para publicar e ouvir música autoral. Artistas enviam faixas (áudio + capa), e quem ouve navega pelo feed, abre a faixa no player, curte, comenta e segue artistas.
 
-Projeto full stack desenvolvido ao longo da disciplina de Programação Web na Católica SC, com uma entrega incremental por aula (Aula 02 a Aula 12). A versão publicada aqui é a da Aula 12.
+Projeto full stack desenvolvido ao longo da disciplina de Programação Web na Católica SC, com uma entrega incremental por aula. A versão publicada aqui é a da **Aula 15**.
 
 > A mesma aplicação, reorganizada em **DDD + arquitetura hexagonal** com mensageria, está em [musicvibe-ddd](https://github.com/weslem-dev/musicvibe-ddd).
 
@@ -20,7 +20,11 @@ Projeto full stack desenvolvido ao longo da disciplina de Programação Web na C
 - **Streaming:** rota de áudio com suporte a `Range` (HTTP 206), para o player conseguir avançar e retroceder sem baixar o arquivo inteiro.
 - **Social:** curtir/descurtir, comentar e seguir/deixar de seguir, com contadores (faixas, seguidores, curtidas, comentários, plays).
 - **Feeds:** feed geral e feed de quem eu sigo, paginados.
-- **Busca** de faixas e artistas pela API.
+- **Playlists:** coleções públicas ou privadas, com "Salvar" (marcar em quais playlists a faixa está) e detalhe da playlist.
+- **Busca** de faixas e pessoas, com debounce, termo na URL e barra de busca na Navbar.
+- **Notificações:** curtidas, comentários e novos seguidores, com sino na Navbar (polling a cada 30 s) e "marcar como lida".
+- **Denúncias** de faixas, com cinco motivos fixos.
+- **Painel de administração:** Dashboard, revisão de denúncias, bloqueio de usuários e exclusão de faixas, acessível só a administradores.
 
 ## Decisões técnicas
 
@@ -31,9 +35,12 @@ Projeto full stack desenvolvido ao longo da disciplina de Programação Web na C
 - **Respostas da API padronizadas:** todas seguem o formato `{ success, message, data, errors }`.
 - **Front-end sem condição de corrida:** o composable `useAsyncData` numera cada requisição (`lastCallId`) e descarta respostas atrasadas. Assim, ao trocar rápido de perfil, a tela nunca mostra os dados do perfil anterior.
 - **Feedback de erro no lugar certo:** ações (curtir, seguir, excluir) avisam por toast via interceptor do Axios, leituras mostram o erro na própria tela e formulários mostram o erro no campo.
-- **Atualização otimista** em curtir e seguir: a interface responde na hora e desfaz a mudança se a API falhar.
+- **Atualização otimista** em curtir, seguir, "Salvar" na playlist e "marcar como lida", com um único helper (`runOptimistic`): a interface responde na hora e desfaz a mudança se a API falhar. As ações do administrador fazem o contrário e esperam o servidor.
+- **Contadores guardados e consistentes:** playlists e notificações entram na mesma transação da ação que as gera, com travas de linha numa ordem fixa para evitar deadlock. A exclusão de uma faixa limpa playlists, denúncias e notificações antes de apagá-la.
+- **Busca segura:** o `LIKE` escapa `%` e `_` (`utils/escapeLike.js`), então buscar `%%` não devolve a tabela inteira.
+- **Autorização que lê o banco:** o `isAuthenticated` confere o usuário no banco a cada requisição. Bloquear uma conta ou rebaixar um administrador vale na hora, mesmo com o token antigo. O painel tem uma única guarda (`router.use('/admin', isAuthenticated, isAdmin)`).
 
-Mais detalhes em [`docs/decisoes-aula-12.md`](docs/decisoes-aula-12.md).
+Mais detalhes em [`docs/`](docs): [Aula 12](docs/decisoes-aula-12.md), [Aula 13](docs/decisoes-aula-13.md), [Aula 14](docs/decisoes-aula-14.md) e [Aula 15](docs/decisoes-aula-15.md).
 
 ## Estrutura
 
@@ -43,16 +50,17 @@ musicvibe/
 │   ├── app.js              # middlewares globais, rotas e sync do banco
 │   ├── bin/www             # sobe o servidor HTTP
 │   ├── config/             # banco, JWT, associações entre models, constantes
-│   ├── middlewares/        # auth, upload (multer), errorHandler, apiResponse
-│   ├── modules/            # user, track, like, comment, follow, search
-│   └── utils/              # paginação, limpeza de arquivos
+│   ├── middlewares/        # auth (isAuthenticated + isAdmin), upload (multer), errorHandler, apiResponse
+│   ├── modules/            # user, track, like, comment, follow, search, playlist, notification, report, admin
+│   ├── scripts/            # setAdmin.js (promove/rebaixa administrador pelo terminal)
+│   └── utils/              # paginação, parseId, escapeLike, limpeza de arquivos
 ├── frontend/
 │   └── src/
 │       ├── views/          # telas (feed, faixa, upload, perfil, ...)
-│       ├── components/     # componentes de base e de domínio
-│       ├── composables/    # useAsyncData, useToast, useAuth, usePaginatedList, ...
+│       ├── components/     # componentes de base (BaseModal, ConfirmModal...) e de domínio
+│       ├── composables/    # useAsyncData, usePaginatedList, useDebouncedValue, useToast, useAuth, ...
 │       ├── services/       # chamadas à API (Axios)
-│       ├── stores/         # Pinia (autenticação)
+│       ├── stores/         # Pinia (autenticação e notificações)
 │       └── router/         # rotas e guards de autenticação
 └── docs/
 ```
@@ -75,7 +83,18 @@ Todas as rotas usam o prefixo `/api`.
 | GET / POST | `/tracks/:trackId/comments` | Comentários |
 | POST | `/users/:userId/toggle-follow` | Seguir / deixar de seguir |
 | GET | `/users/:userId/followers`, `/users/:userId/following` | Seguidores e seguindo |
-| GET | `/search` | Busca |
+| GET | `/search?q=` | Busca de faixas e pessoas |
+| GET / POST | `/my-playlists`, `/playlists` | Minhas playlists e criar |
+| GET / DELETE | `/playlists/:id` | Detalhe e exclusão |
+| POST / DELETE | `/playlists/:id/tracks`, `/playlists/:id/tracks/:trackId` | Adicionar e remover faixa |
+| GET | `/tracks/:trackId/playlists-status` | Em quais das minhas playlists a faixa está |
+| GET | `/notifications`, `/notifications/unread-count` | Notificações e número de não lidas |
+| PATCH | `/notifications/:id/read` | Marcar como lida |
+| POST | `/tracks/:trackId/report` | Denunciar uma faixa |
+| GET | `/admin/dashboard` | Painel: números do sistema |
+| GET / PATCH | `/admin/reports`, `/admin/reports/:id/review` | Painel: denúncias e revisão |
+| GET / PATCH | `/admin/users`, `/admin/users/:id/block` | Painel: usuários e bloqueio |
+| GET / DELETE | `/admin/tracks`, `/admin/tracks/:id` | Painel: faixas e exclusão |
 
 ## Como executar
 
@@ -97,10 +116,19 @@ npm run dev                 # http://localhost:5173
 
 As tabelas são criadas automaticamente pelo Sequelize na primeira execução (crie antes só o banco vazio: `CREATE DATABASE musicvibe;`).
 
+Para ter um administrador, crie a conta pelo site e promova-a pelo terminal (não existe rota para isso, de propósito):
+
+```bash
+cd backend
+node scripts/setAdmin.js <username>       # promove
+node scripts/setAdmin.js <username> off   # rebaixa
+```
+
 ## Próximos passos
 
-- Playlists, painel administrativo e tela de busca (as rotas do front-end já existem, mas as telas ainda são placeholders).
-- Testes automatizados (Jest + Supertest na API).
+- Paginação por cursor no lugar do offset (hoje, uma lista que muda entre uma página e a seguinte pode pular itens).
+- Revisão de experiência de uso: skeletons, responsividade e acessibilidade do painel no celular.
+- Testes automatizados versionados no repositório (Jest + Supertest na API, Vitest no front).
 - Trocar `sequelize.sync({ alter: true })` por migrations.
 
 ## Autor

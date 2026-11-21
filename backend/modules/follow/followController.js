@@ -2,27 +2,14 @@ const followService = require('./followService');
 const trackService = require('../track/trackService');
 const { success } = require('../../middlewares/apiResponse');
 const { parsePagination } = require('../../utils/pagination');
+const { parseId } = require('../../utils/parseId');
 
-// ADICIONADO NA AULA 11.
-// req.params.userId chega como TEXTO ("5"), enquanto req.userId (do token) é
-// NÚMERO (5). Em JavaScript, "5" === 5 é false: sem converter, a comparação
-// "seguir a si mesmo" nunca daria true e dava pra seguir a si mesmo sem erro.
-// A conversão acontece AQUI, na borda (controller), antes de o valor entrar no
-// service -- que só trabalha com números.
-function parseUserId(value) {
-    const id = Number(value);
-
-    if (!Number.isInteger(id) || id <= 0) {
-        const error = new Error('Identificador de usuário inválido.');
-        error.status = 400;
-        throw error;
-    }
-
-    return id;
-}
+// AULA 13: a função local parseUserId virou o utilitário compartilhado
+// utils/parseId.js (o módulo de playlists precisa da mesma conversão). Mesma
+// regra e mesma mensagem: "Identificador de usuário inválido." (400).
 
 exports.toggleFollow = async (req, res) => {
-    const targetId = parseUserId(req.params.userId);
+    const targetId = parseId(req.params.userId, 'usuário');
 
     const result = await followService.toggleFollow(req.userId, targetId);
 
@@ -35,7 +22,7 @@ exports.toggleFollow = async (req, res) => {
 };
 
 exports.getFollowStatus = async (req, res) => {
-    const targetId = parseUserId(req.params.userId);
+    const targetId = parseId(req.params.userId, 'usuário');
 
     const status = await followService.getFollowStatus(req.userId, targetId);
 
@@ -43,13 +30,13 @@ exports.getFollowStatus = async (req, res) => {
 };
 
 exports.getFollowers = async (req, res) => {
-    const people = await followService.getFollowers(parseUserId(req.params.userId));
+    const people = await followService.getFollowers(parseId(req.params.userId, 'usuário'));
 
     return success(res, people);
 };
 
 exports.getFollowing = async (req, res) => {
-    const people = await followService.getFollowing(parseUserId(req.params.userId));
+    const people = await followService.getFollowing(parseId(req.params.userId, 'usuário'));
 
     return success(res, people);
 };

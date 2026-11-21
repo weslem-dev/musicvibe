@@ -1,9 +1,13 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import CommentSection from '../components/CommentSection.vue'
 import LikeButton from '../components/LikeButton.vue'
+import AddToPlaylistModal from '../components/playlists/AddToPlaylistModal.vue'
+import ReportTrackModal from '../components/reports/ReportTrackModal.vue'
+import { useAuthenticatedAction } from '../composables/useAuthenticatedAction'
 import { useAsyncData } from '../composables/useAsyncData'
+import { useToast } from '../composables/useToast'
 import { getTrackById } from '../services/trackService'
 import { formatDate } from '../utils/format'
 import { resolveAudioUrl, resolveCoverUrl, FALLBACK_COVER } from '../utils/media'
@@ -37,6 +41,28 @@ function handleLikeChange({ liked, count }) {
 // (recarregar somaria mais uma visualização).
 function handleCommentCreated() {
   track.value.commentsCount += 1
+}
+
+// AULA 13: botão "Salvar" (playlists). Aparece para TODO MUNDO; a cerca do
+// useAuthenticatedAction leva o visitante ao login e o traz de volta a esta
+// faixa. Para quem está logado, só abre o modal.
+const isSaveOpen = ref(false)
+const { run: openSave } = useAuthenticatedAction(() => {
+  isSaveOpen.value = true
+})
+
+// AULA 14: "Denunciar". Só aparece para quem NÃO é o dono (v-if no template; a
+// API também recusa com 400). Mesma cerca do "Salvar": visitante vai ao login e
+// volta a esta faixa.
+const toast = useToast()
+const isReportOpen = ref(false)
+const { run: openReport } = useAuthenticatedAction(() => {
+  isReportOpen.value = true
+})
+
+function handleReported(response) {
+  isReportOpen.value = false
+  toast.success(response.message)
 }
 
 function handleCoverError(event) {
@@ -93,6 +119,15 @@ function handleCoverError(event) {
               @change="handleLikeChange"
             />
 
+            <button type="button" class="detail__save" @click="openSave()">
+              <i class="bi bi-bookmark-plus"></i> Salvar
+            </button>
+
+            <!-- AULA 14: invisível para o dono (ninguém denuncia a própria faixa). -->
+            <button v-if="!track.isOwner" type="button" class="detail__report" @click="openReport()">
+              <i class="bi bi-flag"></i> Denunciar
+            </button>
+
             <!-- Só o dono vê o botão. ATENÇÃO: isto é conforto de interface, NÃO
                  segurança. Esconder o botão não impede ninguém de chamar a rota
                  de edição na mão (URL, curl, DevTools): quem barra é o back-end,
@@ -123,6 +158,14 @@ function handleCoverError(event) {
       </article>
 
       <CommentSection :track-id="track.id" @created="handleCommentCreated" />
+
+      <!-- Interruptor v-if: o modal só existe enquanto está aberto, e cada abertura
+           busca o estado atual das playlists. Fica DENTRO deste bloco, onde a faixa
+           já está carregada (track.id existe). -->
+      <AddToPlaylistModal v-if="isSaveOpen" v-model="isSaveOpen" :track-id="track.id" />
+
+      <!-- AULA 14: mesmo interruptor v-if (cada abertura começa sem motivo marcado). -->
+      <ReportTrackModal v-if="isReportOpen" v-model="isReportOpen" :track-id="track.id" @reported="handleReported" />
     </template>
   </section>
 </template>
@@ -180,6 +223,44 @@ a.detail__author:hover {
   align-items: flex-start;
   gap: 0.75rem;
   margin-top: 1rem;
+}
+
+.detail__save {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 1rem;
+  border: 1px solid #d8d8e0;
+  border-radius: 999px;
+  background: #fff;
+  color: #555;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.detail__save:hover {
+  border-color: var(--brand-color, #7c3aed);
+  color: var(--brand-color, #7c3aed);
+}
+
+.detail__report {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 1rem;
+  border: 1px solid #d8d8e0;
+  border-radius: 999px;
+  background: #fff;
+  color: #777;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.detail__report:hover {
+  border-color: #d33;
+  color: #d33;
 }
 
 .detail__edit {

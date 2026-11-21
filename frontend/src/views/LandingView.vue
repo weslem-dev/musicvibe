@@ -12,13 +12,6 @@ const apiStatus = computed(() => {
   if (error.value) return 'offline'
   return status.value.status
 })
-
-// --- Teste temporário da Etapa 5 (Parte B), mantido comentado ---
-// import('../services/searchService').then(({ search }) => {
-//   search('a')
-//     .then((response) => console.log('Busca OK:', response.data))
-//     .catch((error) => console.error('Erro na busca:', error.message))
-// })
 </script>
 
 <template>

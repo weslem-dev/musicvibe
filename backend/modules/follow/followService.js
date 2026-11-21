@@ -1,6 +1,8 @@
 const sequelize = require('../../config/database');
 const User = require('../user/userModel');
 const Follow = require('./followModel');
+const { createNotification, removeNotification } = require('../notification/notificationService'); // AULA 14
+const { NOTIFICATION } = require('../../config/constants'); // AULA 14
 
 // Só estes campos de uma pessoa saem da API (nunca password nem email).
 const PERSON_ATTRIBUTES = ['id', 'username', 'fullName', 'bio', 'profilePicture', 'followersCount', 'followingCount'];
@@ -31,9 +33,10 @@ async function toggleFollow(followerId, followingId) {
     }
 
     try {
-        // TRÊS escritas numa só transação: a linha em follows + followersCount
-        // de quem é seguido + followingCount de quem segue. Ou valem as três,
-        // ou nenhuma. Todo comando leva { transaction: t }.
+        // QUATRO escritas numa só transação: a linha em follows + followersCount
+        // de quem é seguido + followingCount de quem segue + o aviso para quem
+        // é seguido (Aula 14). Ou valem as quatro, ou nenhuma. Todo comando
+        // leva { transaction: t }.
         return await sequelize.transaction(async (t) => {
             // TRAVA as duas linhas de usuário (SELECT ... FOR UPDATE), SEMPRE em
             // ordem crescente de id. Sem a trava, dois toggles simultâneos do
@@ -57,15 +60,20 @@ async function toggleFollow(followerId, followingId) {
                 transaction: t
             });
 
+            // AULA 14: o aviso vai para quem é SEGUIDO; não tem faixa (trackId null).
+            const notice = { userId: followingId, actorId: followerId, type: NOTIFICATION.TYPES.FOLLOW };
+
             if (created) {
                 // Começou a seguir: sobe nos DOIS lados -- quem é seguido ganha
                 // um SEGUIDOR; quem segue passa a ter mais um SEGUINDO.
                 await User.increment('followersCount', { where: { id: followingId }, transaction: t });
                 await User.increment('followingCount', { where: { id: followerId }, transaction: t });
+                await createNotification(notice, t);
             } else {
                 await follow.destroy({ transaction: t });
                 await User.decrement('followersCount', { where: { id: followingId }, transaction: t });
                 await User.decrement('followingCount', { where: { id: followerId }, transaction: t });
+                await removeNotification(notice, t);
             }
 
             // reload() relê a linha do alvo DEPOIS dos UPDATEs: increment/decrement

@@ -12,11 +12,17 @@ export function login(payload) {
   return api.post('/login', payload, { silent: true })
 }
 
-// O logout não tem corpo (null) e é a 3ª posição que recebe a configuração.
+// O logout não tem corpo e é a 3ª posição que recebe a configuração.
 // Silencioso: a store limpa a sessão local mesmo se esta chamada falhar, então
 // um toast de erro aqui só confundiria.
+//
+// AULA 14: o 2º argumento é `undefined`, e não `null`. Com `null`, o Axios
+// enviava o texto "null" como corpo JSON; o express.json() da API (modo
+// estrito) recusava com 400, e, como o cors estava DEPOIS dele no app.js, a
+// resposta saía sem o cabeçalho de CORS: o Console mostrava um erro vermelho de
+// CORS a cada logout. Com `undefined`, a requisição vai sem corpo nenhum.
 export function logout() {
-  return api.post('/logout', null, { silent: true })
+  return api.post('/logout', undefined, { silent: true })
 }
 
 // Usa o token salvo (anexado automaticamente pelo interceptor do api.js)
